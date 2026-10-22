@@ -42,6 +42,7 @@ public final class GafiCommandsClient implements ClientModInitializer {
     public void onInitializeClient() {
         GafiConfig.load();
         ClientReceiveMessageEvents.CHAT.register(GafiCommandsClient::onPublicChat);
+        ClientReceiveMessageEvents.GAME.register(GafiCommandsClient::onSystemMessage);
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> registerCommands(dispatcher));
         ClientTickEvents.END_CLIENT_TICK.register(GafiCommandsClient::onClientTick);
     }
@@ -49,16 +50,69 @@ public final class GafiCommandsClient implements ClientModInitializer {
     private static void onPublicChat(Text message, net.minecraft.network.message.SignedMessage signedMessage,
                                      GameProfile sender, net.minecraft.network.message.MessageType.Parameters params,
                                      java.time.Instant receptionTimestamp) {
-        if (sender == null || message == null) return;
-        String nickname = sender.name();
-        if (GafiConfig.isBlacklisted(nickname)) return;
+        if (message == null) return;
 
-        Optional<String> maybeBody = PublicChatParser.extractPublicBody(message.getString(), nickname);
-        if (maybeBody.isEmpty()) return;
-        String body = maybeBody.get();
-        String lower = body.toLowerCase(Locale.ROOT);
+        MinecraftClient client = MinecraftClient.getInstance();
+        String senderName = sender != null ? sender.name() : resolvePlayerName(client, signedMessage);
+        if (senderName == null || senderName.isBlank()) {
+            handleDecoratedPublicLine(message.getString());
+            return;
+        }
+        if (GafiConfig.isBlacklisted(senderName)) return;
 
-        // No cooldown or artificial delay: send both packets consecutively.
+        String displayed = message.getString();
+        if (PublicChatParser.isPrivateMessage(displayed)) return;
+        String body;
+        if (signedMessage != null && signedMessage.getContent() != null) {
+            body = signedMessage.getContent().getString();
+        } else {
+            body = PublicChatParser.extractPublicBody(displayed, senderName).orElse(displayed);
+        }
+        processPhrase(senderName, body);
+    }
+
+    private static void onSystemMessage(Text message, boolean overlay) {
+        if (overlay || message == null) return;
+        handleDecoratedPublicLine(message.getString());
+    }
+
+    private static void handleDecoratedPublicLine(String rawLine) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayNetworkHandler network = client.getNetworkHandler();
+        if (network == null || rawLine == null || PublicChatParser.isPrivateMessage(rawLine)) return;
+
+        for (PlayerListEntry entry : network.getPlayerList()) {
+            GameProfile profile = entry.getProfile();
+            if (profile == null) continue;
+            String nickname = profile.name();
+            if (nickname == null || nickname.isBlank()) continue;
+            Optional<String> body = PublicChatParser.extractPrefixedPublicBody(rawLine, nickname);
+            if (body.isPresent()) {
+                if (!GafiConfig.isBlacklisted(nickname)) processPhrase(nickname, body.get());
+                return;
+            }
+        }
+    }
+
+    private static String resolvePlayerName(MinecraftClient client,
+                                            net.minecraft.network.message.SignedMessage signedMessage) {
+        if (signedMessage == null || client.getNetworkHandler() == null) return null;
+        java.util.UUID senderId = signedMessage.getSender();
+        if (senderId == null) return null;
+        for (PlayerListEntry entry : client.getNetworkHandler().getPlayerList()) {
+            GameProfile profile = entry.getProfile();
+            if (profile != null && senderId.equals(profile.id())) return profile.name();
+        }
+        return null;
+    }
+
+    private static void processPhrase(String senderName, String body) {
+        if (body == null || body.isBlank() || GafiConfig.isBlacklisted(senderName)) return;
+        String cleanBody = PublicChatParser.stripFormatting(body).trim();
+        if (cleanBody.isEmpty()) return;
+        String lower = cleanBody.toLowerCase(Locale.ROOT);
+
+        // Quit has no cooldown and sends both packets consecutively.
         if (QUIT_PATTERN.matcher(lower).find()) {
             sendQuitImmediately();
             return;
@@ -67,8 +121,8 @@ public final class GafiCommandsClient implements ClientModInitializer {
         if (CROUCH_PATTERN.matcher(lower).find()) pressForTicks(false, 5);
         if (SPIN_PATTERN.matcher(lower).find()) startSpin();
 
-        Matcher calculate = CALCULATE_PATTERN.matcher(body);
-        if (calculate.find()) runCalculator(body.substring(calculate.end()).trim());
+        Matcher calculate = CALCULATE_PATTERN.matcher(cleanBody);
+        if (calculate.find()) runCalculator(cleanBody.substring(calculate.end()).trim());
     }
 
     private static void sendQuitImmediately() {
