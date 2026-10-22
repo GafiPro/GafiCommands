@@ -50,7 +50,7 @@ public final class GafiCommandsClient implements ClientModInitializer {
                                      GameProfile sender, net.minecraft.network.message.MessageType.Parameters params,
                                      java.time.Instant receptionTimestamp) {
         if (sender == null || message == null) return;
-        String nickname = sender.getName();
+        String nickname = sender.name();
         if (GafiConfig.isBlacklisted(nickname)) return;
 
         Optional<String> maybeBody = PublicChatParser.extractPublicBody(message.getString(), nickname);
