@@ -33,6 +33,46 @@ public final class PublicChatParser {
         return Optional.of(suffix);
     }
 
+    public static boolean isPrivateMessage(String message) {
+        return message != null && looksPrivate(stripFormatting(message));
+    }
+
+    /**
+     * Strict fallback for servers that print public player chat as ordinary system text.
+     * Unlike extractPublicBody, this returns a value only if the known player's name
+     * appears in the line and is followed by a public-chat separator.
+     */
+    public static Optional<String> extractPrefixedPublicBody(String rawMessage, String senderName) {
+        if (rawMessage == null || rawMessage.isBlank() || senderName == null || senderName.isBlank()) {
+            return Optional.empty();
+        }
+        String clean = stripFormatting(rawMessage).trim();
+        if (clean.isEmpty() || looksPrivate(clean)) return Optional.empty();
+
+        String lower = clean.toLowerCase(Locale.ROOT);
+        String sender = senderName.toLowerCase(Locale.ROOT);
+        int index = findNicknameToken(lower, sender);
+        if (index < 0) return Optional.empty();
+
+        int end = index + senderName.length();
+        if (end >= clean.length()) return Optional.empty();
+        String suffix = clean.substring(end);
+        if (suffix.isEmpty()) return Optional.empty();
+
+        char separator = suffix.charAt(0);
+        if (separator == ':' || separator == '>' || separator == '»' || separator == '›'
+                || separator == '|' || separator == ']') {
+            suffix = suffix.substring(1).stripLeading();
+        } else if (separator == '-' && suffix.length() > 1 && suffix.charAt(1) == '>') {
+            suffix = suffix.substring(2).stripLeading();
+        } else {
+            return Optional.empty();
+        }
+
+        if (suffix.isBlank() || looksPrivate(suffix)) return Optional.empty();
+        return Optional.of(suffix);
+    }
+
     public static String stripFormatting(String message) {
         return message == null ? "" : message.replaceAll("(?i)§[0-9A-FK-ORX]", "");
     }
