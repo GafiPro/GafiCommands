@@ -25,11 +25,29 @@ jobs:
           gradle-version: '9.2.1'
           validate-wrappers: false
       - name: Run tests and build the remapped mod JAR
-        run: gradle test build --no-daemon
+        shell: bash
+        run: |
+          set +e
+          gradle test build --no-daemon --stacktrace --info > build.log 2>&1
+          result=$?
+          tail -n 180 build.log
+          exit $result
       - name: Upload Fabric mod JAR
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: GafiCommands-1.1.0
           path: build/libs/gaficommands-1.1.0.jar
           if-no-files-found: error
           retention-days: 30
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GafiCommands-build-diagnostics
+          path: |
+            build.log
+            build/reports/**
+            build/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
